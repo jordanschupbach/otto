@@ -18,11 +18,17 @@ target_include_directories(otto_core PUBLIC src)
 target_link_libraries(otto_core PUBLIC PkgConfig::WEBKIT)
 target_compile_options(otto_core PRIVATE -Wall -Wextra -Wpedantic)
 
+# Embed page scripts as C++ string constants; re-configure when they change.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS src/hints.js src/scripts.cpp.in)
+file(READ src/hints.js OTTO_HINTS_JS)
+configure_file(src/scripts.cpp.in ${CMAKE_CURRENT_BINARY_DIR}/scripts.cpp @ONLY)
+
 add_executable(otto
   src/main.cpp
   src/browser_window.cpp
   src/pane.cpp
   src/shortcuts.cpp
+  ${CMAKE_CURRENT_BINARY_DIR}/scripts.cpp
 )
 target_link_libraries(otto PRIVATE otto_core)
 target_compile_options(otto PRIVATE -Wall -Wextra -Wpedantic)

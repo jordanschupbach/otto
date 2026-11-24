@@ -1,5 +1,6 @@
 #include "browser_window.hpp"
 
+#include "scripts.hpp"
 #include "shortcuts.hpp"
 
 #include <algorithm>
@@ -71,6 +72,7 @@ BrowserWindow::BrowserWindow(GtkApplication* app, const std::vector<std::string>
     install_css_once();
     settings_ = webkit_settings_new();
     webkit_settings_set_enable_developer_extras(settings_, TRUE);  // right-click → Inspect
+    setup_page_scripts();
 
     build_ui(app);
     install_actions();
@@ -79,7 +81,43 @@ BrowserWindow::BrowserWindow(GtkApplication* app, const std::vector<std::string>
     if (tabs_.empty()) new_tab("about:blank", true);
 }
 
-BrowserWindow::~BrowserWindow() { g_object_unref(settings_); }
+BrowserWindow::~BrowserWindow() {
+    g_object_unref(content_manager_);
+    g_object_unref(settings_);
+}
+
+// Page scripts run in their own JavaScript world ("otto"): they share the
+// page's DOM but not its globals, so only they can post to our message handler.
+void BrowserWindow::setup_page_scripts() {
+    constexpr const char* kWorld = "otto";
+    content_manager_ = webkit_user_content_manager_new();
+
+    WebKitUserScript* hints = webkit_user_script_new_for_world(
+        scripts::kHints, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
+        WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, kWorld, nullptr, nullptr);
+    webkit_user_content_manager_add_script(content_manager_, hints);
+    webkit_user_script_unref(hints);
+
+    webkit_user_content_manager_register_script_message_handler(content_manager_, "otto", kWorld);
+    g_signal_connect(content_manager_, "script-message-received::otto",
+                     G_CALLBACK(on_script_message), this);
+}
+
+// Messages from our page scripts: {type: "open-in-new-tab", url}.
+void BrowserWindow::on_script_message(WebKitUserContentManager*, JSCValue* message,
+                                      BrowserWindow* self) {
+    if (!jsc_value_is_object(message)) return;
+    g_autoptr(JSCValue) type_value = jsc_value_object_get_property(message, "type");
+    g_autofree char* type = jsc_value_to_string(type_value);
+
+    if (g_strcmp0(type, "open-in-new-tab") == 0) {
+        g_autoptr(JSCValue) url_value = jsc_value_object_get_property(message, "url");
+        g_autofree char* url = jsc_value_to_string(url_value);
+        if (url && *url) self->new_tab(url, false, self->insert_position_after_current());
+    } else {
+        g_warning("Unknown page script message type: %s", type ? type : "(null)");
+    }
+}
 
 void BrowserWindow::present() { gtk_window_present(window_); }
 
@@ -175,10 +213,11 @@ void BrowserWindow::install_actions() {
 
 WebKitWebView* BrowserWindow::create_web_view(WebKitWebView* related) {
     // A related view shares its opener's web process (needed for window.open)
-    // and inherits its settings.
+    // and inherits its settings and user content manager.
     GObject* view = related
         ? static_cast<GObject*>(g_object_new(WEBKIT_TYPE_WEB_VIEW, "related-view", related, nullptr))
-        : static_cast<GObject*>(g_object_new(WEBKIT_TYPE_WEB_VIEW, "settings", settings_, nullptr));
+        : static_cast<GObject*>(g_object_new(WEBKIT_TYPE_WEB_VIEW, "settings", settings_,
+                                             "user-content-manager", content_manager_, nullptr));
     return WEBKIT_WEB_VIEW(view);
 }
 
@@ -544,6 +583,7 @@ void BrowserWindow::on_destroy(GtkWidget*, BrowserWindow* self) {
         tab->panes.clear();
     }
     g_signal_handlers_disconnect_by_data(self->notebook_, self);
+    g_signal_handlers_disconnect_by_data(self->content_manager_, self);
     g_object_unref(self->notebook_);
     delete self;
 }

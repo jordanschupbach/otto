@@ -68,9 +68,14 @@ private:
     static void on_switch_page(GtkNotebook*, GtkWidget* page, guint, BrowserWindow* self);
     static void on_destroy(GtkWidget*, BrowserWindow* self);
 
+    // Page scripts (link hints) and the message channel they use to reach us.
+    void setup_page_scripts();
+    static void on_script_message(WebKitUserContentManager*, JSCValue* message, BrowserWindow* self);
+
     GtkWindow* window_ = nullptr;
     GtkNotebook* notebook_ = nullptr;     // we hold an extra ref; see on_destroy
     WebKitSettings* settings_ = nullptr;  // shared by all views in this window
+    WebKitUserContentManager* content_manager_ = nullptr;  // page scripts; shared likewise
 
     std::vector<std::unique_ptr<Tab>> tabs_;
 };
