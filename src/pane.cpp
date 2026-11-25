@@ -1,5 +1,6 @@
 #include "pane.hpp"
 
+#include "theme.hpp"
 #include "url.hpp"
 
 #include <algorithm>
@@ -112,6 +113,10 @@ Pane::Pane(PaneHost* host, WebKitWebView* view) : host_(host), view_(view) {
     });
     connect(view_, "notify::zoom-level", [](WebKitWebView*, GParamSpec*, Pane* p) { p->update_zoom(); });
     connect(view_, "load-changed", [](WebKitWebView*, WebKitLoadEvent event, Pane* p) {
+        if (event == WEBKIT_LOAD_STARTED || event == WEBKIT_LOAD_COMMITTED) {
+            p->page_committed_ = event == WEBKIT_LOAD_COMMITTED;
+            p->update_background();
+        }
         p->update_address();
         p->update_navigation();
         // Pages without a <title> never notify::title; refresh the URI fallback.
@@ -151,16 +156,34 @@ Pane::Pane(PaneHost* host, WebKitWebView* view) : host_(host), view_(view) {
     update_address();
     update_navigation();
     update_zoom();
+    update_background();
 }
 
 Pane::~Pane() {
+    cancel_pending_load();
     for (GObject* obj : connected_) g_signal_handlers_disconnect_by_data(obj, this);
     g_object_unref(root_);
 }
 
 void Pane::load(const std::string& input) {
+    cancel_pending_load();
     std::string uri = normalize_input(input);
     webkit_web_view_load_uri(view_, uri.c_str());
+}
+
+void Pane::load_when_idle(const std::string& input) {
+    cancel_pending_load();
+    pending_uri_ = input;
+    pending_load_ = g_idle_add_once([](gpointer data) {
+        auto* p = static_cast<Pane*>(data);
+        p->pending_load_ = 0;
+        p->load(p->pending_uri_);
+    }, this);
+}
+
+void Pane::cancel_pending_load() {
+    if (pending_load_) g_source_remove(pending_load_);
+    pending_load_ = 0;
 }
 
 void Pane::go_back() { webkit_web_view_go_back(view_); }
@@ -208,6 +231,17 @@ std::string Pane::title() const {
 }
 
 bool Pane::is_loading() const { return webkit_web_view_is_loading(view_); }
+
+// WebKit paints the view's background colour under any page that doesn't set its
+// own (most don't), so black can only stand in until a page commits; after that
+// it's the usual white. about:blank stays black, as it has nothing to show.
+void Pane::update_background() {
+    const char* uri = webkit_web_view_get_uri(view_);
+    bool blank = !uri || !*uri || g_str_equal(uri, "about:blank");
+    bool black = theme::is_dark() && (!page_committed_ || blank);
+    GdkRGBA color = black ? GdkRGBA{0, 0, 0, 1} : GdkRGBA{1, 1, 1, 1};
+    webkit_web_view_set_background_color(view_, &color);
+}
 
 void Pane::update_address() {
     if (has_focus_within(GTK_WIDGET(address_))) return;  // don't clobber typing

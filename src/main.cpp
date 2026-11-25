@@ -1,4 +1,5 @@
 #include "browser_window.hpp"
+#include "theme.hpp"
 
 #include <gtk/gtk.h>
 
@@ -21,6 +22,8 @@ int on_command_line(GApplication* app, GApplicationCommandLine* cmdline, gpointe
 }
 
 void on_startup(GApplication* app, gpointer) {
+    otto::theme::init();
+
     // Keyboard shortcuts are per window; see shortcuts.cpp.
     GSimpleAction* quit = g_simple_action_new("quit", nullptr);
     g_signal_connect_swapped(quit, "activate", G_CALLBACK(g_application_quit), app);

@@ -1,7 +1,8 @@
 #include "browser_window.hpp"
 
-#include "scripts.hpp"
+#include "web_config.hpp"
 #include "shortcuts.hpp"
+#include "theme.hpp"
 
 #include <algorithm>
 
@@ -70,8 +71,7 @@ struct BrowserWindow::Tab {
 
 BrowserWindow::BrowserWindow(GtkApplication* app, const std::vector<std::string>& inputs) {
     install_css_once();
-    settings_ = webkit_settings_new();
-    webkit_settings_set_enable_developer_extras(settings_, TRUE);  // right-click → Inspect
+    settings_ = web_config::create_settings();
     setup_page_scripts();
 
     build_ui(app);
@@ -86,19 +86,11 @@ BrowserWindow::~BrowserWindow() {
     g_object_unref(settings_);
 }
 
-// Page scripts run in their own JavaScript world ("otto"): they share the
-// page's DOM but not its globals, so only they can post to our message handler.
+// Page scripts (src/keys.js) and the message channel they use to reach us.
 void BrowserWindow::setup_page_scripts() {
-    constexpr const char* kWorld = "otto";
     content_manager_ = webkit_user_content_manager_new();
-
-    WebKitUserScript* hints = webkit_user_script_new_for_world(
-        scripts::kHints, WEBKIT_USER_CONTENT_INJECT_TOP_FRAME,
-        WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_START, kWorld, nullptr, nullptr);
-    webkit_user_content_manager_add_script(content_manager_, hints);
-    webkit_user_script_unref(hints);
-
-    webkit_user_content_manager_register_script_message_handler(content_manager_, "otto", kWorld);
+    web_config::add_page_scripts(content_manager_);
+    web_config::register_message_handler(content_manager_);
     g_signal_connect(content_manager_, "script-message-received::otto",
                      G_CALLBACK(on_script_message), this);
 }
@@ -125,8 +117,22 @@ void BrowserWindow::build_ui(GtkApplication* app) {
     window_ = GTK_WINDOW(gtk_application_window_new(app));
     gtk_window_set_default_size(window_, 1200, 800);
     gtk_window_set_title(window_, "Otto");
-    gtk_window_set_titlebar(window_, gtk_header_bar_new());
+    GtkWidget* header = gtk_header_bar_new();
+    gtk_window_set_titlebar(window_, header);
     install_shortcuts(GTK_WIDGET(window_));
+
+    // Light/dark toggle, top right. The setting is app-wide, so every window's
+    // button follows GtkSettings rather than its own clicks.
+    theme_button_ = gtk_button_new();
+    gtk_widget_set_focusable(theme_button_, FALSE);
+    g_signal_connect(theme_button_, "clicked",
+                     G_CALLBACK(+[](GtkButton*, gpointer) { theme::set_dark(!theme::is_dark()); }),
+                     nullptr);
+    gtk_header_bar_pack_end(GTK_HEADER_BAR(header), theme_button_);
+    g_signal_connect_swapped(gtk_settings_get_default(), "notify::gtk-interface-color-scheme",
+                             G_CALLBACK(+[](BrowserWindow* self) { self->on_theme_changed(); }),
+                             this);
+    update_theme_button();
 
     // We hold our own reference so the notebook (and the web views in it) outlive
     // the window's teardown until on_destroy has disconnected our handlers.
@@ -223,7 +229,7 @@ WebKitWebView* BrowserWindow::create_web_view(WebKitWebView* related) {
 
 BrowserWindow::Tab* BrowserWindow::new_tab(const std::string& input, bool select, int position) {
     Tab* tab = add_tab(create_web_view(), select, position);
-    tab->active->load(input);
+    tab->active->load_when_idle(input);
     return tab;
 }
 
@@ -337,6 +343,20 @@ void BrowserWindow::update_tab_label(Tab* tab) {
     gtk_spinner_set_spinning(GTK_SPINNER(tab->spinner), loading);
 }
 
+// The icon shows the mode a click switches *to*: a moon while light, a sun while dark.
+void BrowserWindow::update_theme_button() {
+    bool dark = theme::is_dark();
+    gtk_button_set_icon_name(GTK_BUTTON(theme_button_),
+                             dark ? "weather-clear-symbolic" : "weather-clear-night-symbolic");
+    gtk_widget_set_tooltip_text(theme_button_, dark ? "Switch to light mode" : "Switch to dark mode");
+}
+
+void BrowserWindow::on_theme_changed() {
+    update_theme_button();
+    for (const auto& tab : tabs_)
+        for (const auto& pane : tab->panes) pane->update_background();
+}
+
 void BrowserWindow::update_window_title() {
     Pane* pane = active_pane();
     const char* title = pane ? webkit_web_view_get_title(pane->view()) : nullptr;
@@ -393,7 +413,7 @@ void BrowserWindow::split_active_pane(GtkOrientation orientation) {
 
     gtk_widget_add_css_class(tab->root, "otto-split");
     activate_pane(tab, pane);
-    pane->load("about:blank");
+    pane->load_when_idle("about:blank");
     pane->focus_address();
 }
 
@@ -584,6 +604,7 @@ void BrowserWindow::on_destroy(GtkWidget*, BrowserWindow* self) {
     }
     g_signal_handlers_disconnect_by_data(self->notebook_, self);
     g_signal_handlers_disconnect_by_data(self->content_manager_, self);
+    g_signal_handlers_disconnect_by_data(gtk_settings_get_default(), self);
     g_object_unref(self->notebook_);
     delete self;
 }

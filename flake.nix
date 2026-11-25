@@ -53,6 +53,9 @@
             pkgs.clang-tools # clangd, clang-format
             pkgs.gdb
             pkgs.just
+            # otto_bench: real key presses for the latency benchmark (X11)
+            pkgs.libxtst
+            pkgs.libxi
           ];
           # Let a dev build (./build/otto) find TLS, icons and GSettings schemas
           # the same way wrapGAppsHook4 does for the packaged binary.

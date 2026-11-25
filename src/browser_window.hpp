@@ -46,6 +46,8 @@ private:
     WebKitWebView* create_web_view(WebKitWebView* related = nullptr);
     void update_tab_label(Tab* tab);
     void update_window_title();
+    void update_theme_button();
+    void on_theme_changed();
 
     // Panes within the current tab.
     Pane* active_pane() const;
@@ -74,6 +76,7 @@ private:
 
     GtkWindow* window_ = nullptr;
     GtkNotebook* notebook_ = nullptr;     // we hold an extra ref; see on_destroy
+    GtkWidget* theme_button_ = nullptr;   // light/dark toggle in the header bar
     WebKitSettings* settings_ = nullptr;  // shared by all views in this window
     WebKitUserContentManager* content_manager_ = nullptr;  // page scripts; shared likewise
 

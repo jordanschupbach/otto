@@ -3,6 +3,6 @@
 
 namespace otto::scripts {
 
-const char* const kHints = R"otto_js(@OTTO_HINTS_JS@)otto_js";
+const char* const kKeys = R"otto_js(@OTTO_KEYS_JS@)otto_js";
 
 }  // namespace otto::scripts

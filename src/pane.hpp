@@ -45,6 +45,10 @@ public:
     WebKitWebView* view() const { return view_; }
 
     void load(const std::string& input);  // URL or search terms
+    // Like load(), but from an idle callback. A fresh view's first load launches
+    // its web process, which takes ~5 ms; this keeps that out of the action that
+    // created the view (e.g. the Ctrl+T handler). A later load() replaces it.
+    void load_when_idle(const std::string& input);
     void go_back();
     void go_forward();
     void reload_or_stop();
@@ -58,6 +62,10 @@ public:
     std::string title() const;  // page title, else URI, else "New Tab"
     bool is_loading() const;
 
+    // Dark mode: black until a page starts showing, so new tabs and panes and
+    // slow loads don't flash white. Call when the theme changes.
+    void update_background();
+
 private:
     template <typename Fn>
     void connect(gpointer instance, const char* signal, Fn handler);
@@ -69,6 +77,10 @@ private:
 
     PaneHost* host_;
     WebKitWebView* view_;
+    bool page_committed_ = false;  // current load has reached WEBKIT_LOAD_COMMITTED
+    guint pending_load_ = 0;  // idle source from load_when_idle(), and its URL
+    std::string pending_uri_;
+    void cancel_pending_load();
     GtkWidget* root_ = nullptr;
     GtkEntry* address_ = nullptr;
     GtkWidget* back_ = nullptr;

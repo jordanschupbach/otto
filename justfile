@@ -25,3 +25,7 @@ clean:
 # Build and run the unit tests
 test: build
     ctest --test-dir {{build_dir}} --output-on-failure
+
+# Benchmarks: page keys on synthetic pages or real sites (URLs), --latency (real key presses), --ui (tabs, panes)
+bench *args: build
+    ./{{build_dir}}/otto_bench "$@"
